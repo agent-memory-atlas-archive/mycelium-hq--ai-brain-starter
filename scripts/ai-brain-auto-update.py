@@ -47,6 +47,14 @@ from pathlib import Path
 
 GIT_TIMEOUT = 60  # seconds per git call; network hangs must not wedge the prompt
 
+# Same idiom as scripts/install-hooks-user-level.py's _TEXT_UTF8 (checked by
+# scripts/check-utf8-subprocess.py): `text=True` alone decodes a child's
+# output with the LOCALE encoding -- cp1252 on a non-English Windows console,
+# which raises UnicodeDecodeError on the first byte of any vault path (every
+# one contains the gear-Meta emoji). Pin it explicitly everywhere this file
+# reads text=True subprocess output.
+_TEXT_UTF8 = {"text": True, "encoding": "utf-8", "errors": "replace"}
+
 
 def _state_dir() -> Path:
     return Path(os.environ.get("ABS_UPDATE_STATE_DIR") or (Path.home() / ".claude"))
@@ -73,8 +81,8 @@ def emit_ctx(message: str) -> None:
 
 def _git(args: list[str], cwd: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
-        ["git", *args], cwd=str(cwd), capture_output=True, text=True,
-        timeout=GIT_TIMEOUT,
+        ["git", *args], cwd=str(cwd), capture_output=True,
+        timeout=GIT_TIMEOUT, **_TEXT_UTF8,
     )
 
 
@@ -252,7 +260,7 @@ def run() -> None:
             try:
                 deploy = subprocess.run(
                     [sys.executable, str(installer), "--quiet", "--fail-on-missing"],
-                    capture_output=True, text=True, timeout=deploy_timeout)
+                    capture_output=True, timeout=deploy_timeout, **_TEXT_UTF8)
                 rc = deploy.returncode
             except subprocess.TimeoutExpired:
                 rc = 124
@@ -441,13 +449,14 @@ def run() -> None:
         try:
             if sync_py.is_file():
                 sync = subprocess.run([sys.executable, str(sync_py)],
-                                      capture_output=True, text=True,
-                                      timeout=deploy_timeout, env=sync_env)
+                                      capture_output=True,
+                                      timeout=deploy_timeout, env=sync_env,
+                                      **_TEXT_UTF8)
                 sync_output = "\n".join((sync.stdout + sync.stderr).splitlines()[-20:])
             elif os.name != "nt" and sync_sh.is_file():
                 sync = subprocess.run(["bash", str(sync_sh)],
-                                      capture_output=True, text=True,
-                                      timeout=deploy_timeout)
+                                      capture_output=True,
+                                      timeout=deploy_timeout, **_TEXT_UTF8)
                 sync_output = "\n".join((sync.stdout + sync.stderr).splitlines()[-20:])
         except (subprocess.TimeoutExpired, OSError):
             sync_output = "(skill sync did not finish; it will retry next update)"
