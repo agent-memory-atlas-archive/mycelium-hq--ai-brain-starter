@@ -66,7 +66,8 @@ def surfacer_out(state: Path, extra_env=None) -> str:
            "ABS_SKILL_DIR": str(state / "noskill")}
     env.update(extra_env or {})
     r = subprocess.run([sys.executable, str(SURFACER)], input="{}",
-                       capture_output=True, text=True, env=env, timeout=60)
+                       capture_output=True, text=True, env=env, timeout=60,
+                       encoding="utf-8", errors="replace")
     try:
         d = json.loads(r.stdout or "{}")
     except json.JSONDecodeError:
@@ -146,7 +147,8 @@ def run_updater(clone: Path, state: Path, session_id: str | None = None):
     if session_id is not None:
         kwargs["input"] = json.dumps({"session_id": session_id})
     return subprocess.run([sys.executable, str(UPDATER)], capture_output=True,
-                          text=True, env=env, timeout=180, **kwargs)
+                          text=True, env=env, timeout=180,
+                          encoding="utf-8", errors="replace", **kwargs)
 
 
 origin = mkrepo(TMP / "o1")
