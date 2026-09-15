@@ -78,7 +78,7 @@ def surfacer_out(state: Path, extra_env=None) -> str:
 def mkstate(tmp: Path, name: str, age_days=None, pinned=False) -> Path:
     s = tmp / name
     s.mkdir(parents=True, exist_ok=True)
-    (s / "settings.json").write_text("{}")
+    (s / "settings.json").write_text("{}", encoding="utf-8")
     if age_days is not None:
         stamp = s / ".ai-brain-starter-last-successful-pull"
         stamp.touch()
@@ -126,7 +126,7 @@ env0 = {**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
 
 def mkrepo(p: Path) -> Path:
     subprocess.run(["git", "init", "-q", str(p)], check=True, env=env0)
-    (p / "f.txt").write_text("x")
+    (p / "f.txt").write_text("x", encoding="utf-8")
     subprocess.run(["git", "-C", str(p), "add", "f.txt"], check=True, env=env0)
     subprocess.run(["git", "-C", str(p), "commit", "-qm", "init"], check=True, env=env0)
     subprocess.run(["git", "-C", str(p), "branch", "-M", "main"], check=True, env=env0)
@@ -166,7 +166,7 @@ ok("7. updater SEEDS the success stamp on first run") if stamp.is_file() \
 # is not yet confirmed current), so this drives it through both phases --
 # stage with one session_id, resolve with a different one -- before
 # asserting either half of the original claim.
-(origin / "new.txt").write_text("y")
+(origin / "new.txt").write_text("y", encoding="utf-8")
 subprocess.run(["git", "-C", str(origin), "add", "new.txt"], check=True, env=env0)
 subprocess.run(["git", "-C", str(origin), "commit", "-qm", "second"], check=True, env=env0)
 old_t = time.time() - 10 * 86400
@@ -188,7 +188,7 @@ else:
 origin2 = mkrepo(TMP / "o2")
 clone2 = TMP / "c2"
 subprocess.run(["git", "clone", "-q", str(origin2), str(clone2)], check=True, env=env0)
-(origin2 / "z.txt").write_text("z")
+(origin2 / "z.txt").write_text("z", encoding="utf-8")
 subprocess.run(["git", "-C", str(origin2), "add", "z.txt"], check=True, env=env0)
 subprocess.run(["git", "-C", str(origin2), "commit", "-qm", "third"], check=True, env=env0)
 st2 = TMP / "s2"
@@ -198,14 +198,14 @@ stamp2 = st2 / ".ai-brain-starter-last-successful-pull"
 
 # Origin must be AHEAD again, or "no stamp advance" would be untestable: a clone
 # already current is CORRECTLY confirmed current, blocked working tree or not.
-(origin2 / "w.txt").write_text("w")
+(origin2 / "w.txt").write_text("w", encoding="utf-8")
 subprocess.run(["git", "-C", str(origin2), "add", "w.txt"], check=True, env=env0)
 subprocess.run(["git", "-C", str(origin2), "commit", "-qm", "fourth"], check=True, env=env0)
 
 frozen_t = time.time() - 30 * 86400
 os.utime(stamp2, (frozen_t, frozen_t))
 # Block the ff the way a real user does: dirty a tracked file.
-(clone2 / "f.txt").write_text("locally edited")
+(clone2 / "f.txt").write_text("locally edited", encoding="utf-8")
 run_updater(clone2, st2)
 if (clone2 / "w.txt").exists():
     bad("9. premise", "the pull was NOT blocked — fixture proves nothing")
