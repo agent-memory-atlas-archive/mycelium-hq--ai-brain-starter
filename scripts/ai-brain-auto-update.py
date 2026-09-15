@@ -364,7 +364,7 @@ def _install_fix_cmd() -> str:
 
 
 def _resolve_pending_deploy(pending: Path, session_id: str, skill: Path,
-                             deploy_timeout: float,
+                             last_ok: Path, deploy_timeout: float,
                              min_deploy_delay: float) -> None:
     """Finish a deploy a PRIOR invocation staged (MYC-4704 gate e6). ALWAYS
     exits the process (via emit_ctx or silent()) -- the caller holds the
@@ -448,12 +448,17 @@ def _resolve_pending_deploy(pending: Path, session_id: str, skill: Path,
             f"cd \"{_redact_text(str(skill))}\" && git merge --ff-only "
             f"{new_head[:12]} (or your preferred strategy).")
 
-    # Merge landed: this checkout is now genuinely running new, real code
-    # for every hook that reads it directly, in a session that provably
-    # differs from the one that pulled it. From here the deploy is a
-    # one-shot attempt (matches the pre-existing installer-failure design):
-    # sync/install failures below report to a human rather than retrying
-    # forever, and `pending` is removed regardless of their outcome.
+    # Merge landed: the clone is CONFIRMED CURRENT WITH ORIGIN again -- the
+    # other of last_ok's exactly-two stamp sites (see its declaration in
+    # run() for the full contract; MYC-3175 test #8 exercises this one).
+    _stamp(last_ok)
+
+    # This checkout is now genuinely running new, real code for every hook
+    # that reads it directly, in a session that provably differs from the
+    # one that pulled it. From here the deploy is a one-shot attempt
+    # (matches the pre-existing installer-failure design): sync/install
+    # failures below report to a human rather than retrying forever, and
+    # `pending` is removed regardless of their outcome.
     sync_output = _run_sync_skills(skill, deploy_timeout)
     installer = skill / "scripts" / "install-hooks-user-level.py"
     try:
@@ -519,13 +524,21 @@ def run() -> None:
     last = state / ".ai-brain-starter-last-update"
     # Distinct from `last`, and the distinction IS the signal (MYC-3175).
     # `last` records that a FETCH ATTEMPT happened; this records that the
-    # fetch actually reached origin (whether or not there was anything new
-    # to pull). A frozen clone keeps stamping `last` forever while this one
-    # stops moving — the only reliable freeze signal, since "behind origin"
-    # is precisely what a clone that cannot fetch under-reports. Stamped on
-    # every successful fetch now (MYC-4704 gate e6), not only once a merge
-    # completes -- the merge itself can now wait days for a new session, and
-    # this must not read as frozen for the whole wait.
+    # clone was CONFIRMED CURRENT WITH ORIGIN -- unchanged contract, tested
+    # by scripts/test_stale_pull_surface.py #8/#9. Stamped in exactly two
+    # places: the `head == origin` branch below, and after a successful
+    # merge in _resolve_pending_deploy(). Deliberately NOT stamped merely
+    # because a fetch succeeded (MYC-4704 gate e6 considered this and
+    # rejected it): a dirty tree or diverged fork now blocks STAGING itself
+    # (step 5 below), the same way it used to block the merge, and that
+    # must keep reading as a freeze to hooks/surface-deployed-hooks-
+    # behind.py -- test #9's exact scenario. A clone that legitimately
+    # staged a pull and is waiting on a new, old-enough session is not
+    # "frozen" either, but the 21-day default staleness threshold
+    # (ABS_STALE_PULL_DAYS) comfortably outlasts any realistic wait for a
+    # new session, so leaving `last_ok` unmoved during that wait costs
+    # nothing in practice and keeps the one contract this signal has ever
+    # made ("confirmed current"), rather than inventing a second, weaker one.
     last_ok = state / ".ai-brain-starter-last-successful-pull"
     lock = state / ".ai-brain-starter-update.lock"
     # Deploy staged by a prior pull, waiting for proof this is a new session
@@ -561,7 +574,7 @@ def run() -> None:
         # resolved or not (see its docstring for why falling through would
         # risk overwriting the staged record with a second, undelayed batch).
         if pending.exists():
-            _resolve_pending_deploy(pending, session_id, skill,
+            _resolve_pending_deploy(pending, session_id, skill, last_ok,
                                      deploy_timeout, min_deploy_delay)
 
         # 2. Reclaim abandoned git locks BEFORE the rate limit (MYC-3175
@@ -622,12 +635,16 @@ def run() -> None:
         if not head or not origin:
             silent()
 
-        # Fetch reached origin and both refs resolved: that is a successful
-        # pull ATTEMPT for freeze-detection purposes (see last_ok comment
-        # above), independent of whether HEAD is already current.
-        _stamp(last_ok)
-
         if head == origin:
+            # Confirmed current with origin: this IS the last_ok contract
+            # (MYC-3175 test_stale_pull_surface.py #8/#9 -- stamp ONLY on
+            # confirmed-current, never on a merely-successful fetch). A
+            # dirty tree or diverged fork that blocks every STAGE attempt
+            # (see step 5 below) must keep last_ok frozen so that freeze
+            # stays visible to hooks/surface-deployed-hooks-behind.py --
+            # stamping here on fetch-success alone would have hidden that
+            # exact case, which is the one this signal exists to catch.
+            _stamp(last_ok)
             # Surface a heal even when there is nothing to pull. This is the
             # case that was invisible before: the clone had been frozen for
             # days by a stranded lock, and going silent here would hide both

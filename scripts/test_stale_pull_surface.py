@@ -132,11 +132,21 @@ def mkrepo(p: Path) -> Path:
     return p
 
 
-def run_updater(clone: Path, state: Path):
+def run_updater(clone: Path, state: Path, session_id: str | None = None):
+    """MYC-4704 gate e6: the pull is now two-phase -- a bare call (no
+    session_id, matching this helper's original no-input shape) only
+    STAGES a pull; the merge itself waits for a later call whose
+    session_id both differs from the staging call's AND clears
+    ABS_UPDATE_MIN_DEPLOY_DELAY_SECONDS (set to 0 here -- this file tests
+    the last_ok/staleness contract, not the elapsed-time gate, which
+    test_ai_brain_auto_update.sh already covers on its own)."""
     env = {**env0, "ABS_SKILL_DIR": str(clone), "ABS_UPDATE_STATE_DIR": str(state),
-           "ABS_UPDATE_INTERVAL_DAYS": "0"}
+           "ABS_UPDATE_INTERVAL_DAYS": "0", "ABS_UPDATE_MIN_DEPLOY_DELAY_SECONDS": "0"}
+    kwargs = {}
+    if session_id is not None:
+        kwargs["input"] = json.dumps({"session_id": session_id})
     return subprocess.run([sys.executable, str(UPDATER)], capture_output=True,
-                          text=True, env=env, timeout=180)
+                          text=True, env=env, timeout=180, **kwargs)
 
 
 origin = mkrepo(TMP / "o1")
@@ -149,15 +159,25 @@ stamp = st / ".ai-brain-starter-last-successful-pull"
 ok("7. updater SEEDS the success stamp on first run") if stamp.is_file() \
     else bad("7. seed", "stamp absent after a run")
 
-# 8. advances on a real pull
+# 8. advances on a real, COMPLETED pull. MYC-4704 gate e6 made the pull
+# two-phase: a bare call only STAGES (last_ok must NOT advance yet -- it
+# is not yet confirmed current), so this drives it through both phases --
+# stage with one session_id, resolve with a different one -- before
+# asserting either half of the original claim.
 (origin / "new.txt").write_text("y")
 subprocess.run(["git", "-C", str(origin), "add", "new.txt"], check=True, env=env0)
 subprocess.run(["git", "-C", str(origin), "commit", "-qm", "second"], check=True, env=env0)
 old_t = time.time() - 10 * 86400
 os.utime(stamp, (old_t, old_t))
-run_updater(clone, st)
+run_updater(clone, st, session_id="stage-8")      # phase 1: stage only
+if (clone / "new.txt").exists() or stamp.stat().st_mtime > old_t + 86400:
+    bad("8. premise", "staging alone already pulled or advanced the stamp "
+                      "-- the two-phase gate is not doing its job")
+run_updater(clone, st, session_id="resolve-8")     # phase 2: a different,
+                                                    # old-enough (MINDELAY=0)
+                                                    # session resolves it
 if stamp.stat().st_mtime > old_t + 86400 and (clone / "new.txt").exists():
-    ok("8. updater ADVANCES the stamp on a real successful pull")
+    ok("8. updater ADVANCES the stamp once a staged pull actually completes")
 else:
     bad("8. advance", f"pulled={(clone/'new.txt').exists()} "
                       f"advanced={stamp.stat().st_mtime > old_t + 86400}")
