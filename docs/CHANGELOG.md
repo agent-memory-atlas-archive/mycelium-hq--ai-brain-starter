@@ -9,6 +9,56 @@ description: What's new in AI Brain Starter — plain English, no jargon
 
 ---
 
+## 2026-09-10: daily maintenance was quietly not running — two bugs, both silent
+
+**Who this affects:** everyone. `vault-daily-maintenance.sh` runs from a LaunchAgent and is what keeps your aggregated files current and your deferred close artifacts committed.
+
+**Bug 1 — if you work unplugged, the pass never ran.** The battery gate deferred whenever the machine was on battery, at any charge level. Each deferral logged `next run catches up` — but on a laptop that is usually unplugged, the next run defers too, and the one after that. One install went **nine days** with seven consecutive deferrals; five were on battery, three of those with the load average at 0.17, 0.16 and 1.24 per core. There was nothing to protect and nothing caught up.
+
+The intent was right — a GC pass is not worth someone's last charge — so the gate now uses a threshold instead of a yes/no: it defers below **50%** and runs above it. Set `MAINT_MIN_BATTERY_PCT` to change the floor. As before, a machine whose charge cannot be read runs the pass rather than stalling forever.
+
+**Bug 2 — the aggregators failed on every single run, and the failure was invisible.** Both `aggregate-sessions.py` and `aggregate-decisions.py` resolve their own vault and deliberately discard a `VAULT_ROOT` that points elsewhere. Because the maintenance script lives inside the skill checkout, they auto-detected the *skill* directory, failed with `<skill>/⚙️ Meta does not exist`, and exited 1. The log recorded `rc=1` and nothing surfaced it, so a pass that reported success had aggregated nothing.
+
+The two calls now pass `VAULT_ROOT_FORCE=1`, which is the override the aggregators themselves tell you to use. No change to the aggregators.
+
+**Why it stayed hidden:** both failures are silent by construction. The battery gate writes a reassuring line and exits 0; the aggregator failure is one `rc=1` in a log nobody reads. If your `Last Session.md` has felt stale, this is why.
+
+---
+
+## 2026-09-09: the NVIDIA grunt-work models are back — and the map now tells you it will rot
+
+**Who this affects:** anyone using `scripts/nvidia.sh` or `_nvidia_router.py` to send cheap, bulk work to NVIDIA's free tier instead of Claude.
+
+Every model ID in that map was dead. Calls came back `404 Not found for account`, so the router fell back to Claude for work that was supposed to be free.
+
+The interesting part is why the old map looked fine. `/v1/models` still listed those models — but **listing is not access**. The catalog shows models your key cannot call, and which ones you *can* call is per-account. Probing the catalog tells you nothing; only a real completion does.
+
+It also rots fast. Of six IDs verified on one day, four were gone eight days later — including the default.
+
+So the map has been re-probed against actual `/v1/chat/completions` calls and now carries the shorter, working set, plus a note on each entry about what it is good for: the default answers in about a second with clean JSON and no reasoning scratchpad, which is what grunt work needs; the reasoning model puts its scratchpad in `reasoning_content`, which is the wrong shape for extraction. The `--model` error message now lists the real options and warns that availability is per-account.
+
+**And the rot proved itself while this was being written.** Nine days after the 2026-08-31 pass, one more of the four — the multilingual stand-in — came back `410 Gone, end of life`. It and its aliases are out. That is three separate die-offs in eighteen days.
+
+**The honest caveat, now written into both files:** these IDs were verified on one free-tier account on 2026-09-09. If yours differ, probe a completion — do not trust the catalog, and do not trust this map to still be current.
+
+One practical note that cost an hour: the default's **first call after an idle spell takes 10–15 seconds** (cold start), then settles to about 1.5s. A 60-second timeout is not generous, it is barely enough. Do not read a slow first call as a dead model.
+
+---
+
+## 2026-09-04: "creo que ya" did nothing, so you had to say goodbye twice
+
+**Who this affects:** anyone working in Spanish who signs off with *creo que ya* — roughly, "I think that's it".
+
+Spanish has a lot of ways to say you are done, and the detector knows most of them. This one it did not know at all. Typed on its own, *creo que ya* matched no tier — not a strong sign-off, not an ambiguous one, nothing — so the session carried on and you had to say goodbye a second time, in different words, before anything happened.
+
+It now sits in the ambiguous tier rather than the strong one. That is deliberate. On its own the phrase is a goodbye. It is also how a lot of sentences start that are not — *creo que ya entendí*, *creo que ya lo tengo*. Ambiguous is the tier for exactly that: Claude asks whether you meant to close, instead of guessing and filing your session while you are still mid-sentence.
+
+Only the bare phrase matches. Anything written after it falls through untouched, the same as every other entry in that tier.
+
+*creo que ya está* is very likely the same case, but it has not been reported or observed in use, so it was left alone rather than added on a hunch.
+
+---
+
 ## 2026-09-02: /graphify can now show you what its typed edges would do, before they do it
 
 **Who this affects:** anyone running `/graphify` on a vault with frontmatter and wikilinks — so, anyone whose graph is built from notes rather than code.
@@ -43,6 +93,24 @@ Obsidian's graph draws exactly one thing: links. An entry that records its floor
 - **Floor names now compare through link syntax.** `[[Acceptance|Aceptación]]`, `Aceptación` and `Acceptance` all resolve to the same floor. The journal index still stores the plain name, so `/weekly` and `/patterns` read exactly what they read before.
 
 This builds on the 2026-08-25 fix below, which taught the checker to find your floor notes folder in the first place — that fix found the notes, this one lets linked entries match them.
+
+---
+
+## 2026-08-25: asking Claude to pass on a message could end your session by mistake
+
+**Who this affects:** anyone working in Spanish who asks Claude to relay something — "dile a Ana que ya quedó", "avísale a Marta que listo", "contéstale que hasta luego".
+
+Spanish ends a session with short phrases: *ya quedó*, *listo*, *chao*, *hasta luego*. The detector looks for them at the end of what you type, which is the right place to look — until the phrase is not yours. When you ask Claude to tell someone *else* that something is done, your sentence still ends on *ya quedó*. You are quoting a message, not saying goodbye.
+
+The detector could not tell the two apart. Typing "dile a Ana que ya quedó" ran the whole close cascade in the middle of a task — session file written, captures filed, commit made, goodbye said — while the user was still working and had asked for none of it. The phrase was message content addressed to a third person, and it read as a farewell.
+
+Spanish now has a guard for relayed speech. When a sentence carries a verb of telling — *dile*, *avísale*, *escríbele*, *cuéntale*, *contéstale*, *mándale… diciendo* — followed by *que* and then a close phrase, the close is suppressed. Saying the same phrase on its own still ends the session: "ya quedó" closes, "dile a Ana que ya quedó" does not.
+
+This had to sit in the strict tier. *ya quedó* and a bare *listo* are strong signals, and the ordinary guards cannot override a strong signal — a weaker guard would have been dead code.
+
+Portuguese very likely has the same gap (*diga a ele que pronto*), but it has not been reported or tested, so nothing was changed there.
+
+---
 
 ## 2026-08-25: the check on your journal's floor labels was never running
 
