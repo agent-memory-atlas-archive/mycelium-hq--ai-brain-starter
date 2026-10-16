@@ -1699,6 +1699,14 @@ PY_DIRECT=(
   # detect-closing-signal.py) with negative controls that the gate still
   # blocks on A's own uncommitted note and decision.
   hooks/test_close_gate_scoped_to_session.py
+  # Close gate 2 read ONE shared runner report, so any session's run within
+  # 30 minutes cleared every other session's gate: session A closed without
+  # ever running session-close-runner.sh because session B had. Drives the
+  # REAL runner (--session) and the REAL gate as two sessions, through the
+  # exact command detect-closing-signal.py injects, with negative controls
+  # (A's own run passes; a no-id session and a legacy runner fall back to the
+  # shared report instead of blocking every close forever).
+  hooks/test_close_gate_runner_per_session.py
   # check-zsh-silent-idioms.py: bash idioms that silently do the wrong thing under
   # zsh (an unbraced $VAR:path in a git read; an unsplit $VAR in `set --` / `for`).
   # Drives the real hook over real stdin and asserts the PARSED decision, because
