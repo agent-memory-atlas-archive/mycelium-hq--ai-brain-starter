@@ -27,6 +27,20 @@ The Spanish pack already closed on «cierra esta sesión», «cierro sesión» a
 
 `tests/integration/test_detect_closing_signal_es_guards.sh` gains four must-fire cases and three must-not-fire controls. The four new cases fail on the pack from before this change.
 
+## 2026-10-14: moving the machinery out of a cloud-synced vault works on Windows PowerShell 5.1 — and no longer kills the process it checks
+
+**Who this affects:** anyone on Windows who runs `scripts/relocate-machinery-sidecar.ps1` with the PowerShell that ships with Windows (5.1), and anyone on Windows whose relocation checks for live Claude sessions (the `.ps1`, or the `.sh` under Git Bash with a Windows Python).
+
+Five things broke on Windows PowerShell 5.1. PowerShell 7 (`pwsh`, which CI runs) does not show the first four, which is why every check stayed green:
+
+1. **A native command that printed one line to stderr stopped the whole script.** Under `$ErrorActionPreference = "Stop"`, PS 5.1 turns a redirected stderr line into a terminating error, and the pipeline stop can kill the command mid-write. On the machine where this was found, `git worktree repair` died while rewriting the vault's `.git` file and left `invalid gitfile format`. The git, Python and cloud-sync probes now run inside a small `Invoke-Native` wrapper that sets the preference back to `Continue` for that one call.
+2. **Python code passed with `-c` arrived mangled.** PS 5.1 does not escape embedded double quotes when it builds a native command line, so `if os.name == "nt"` reached Python as `if os.name == nt` and raised a `NameError`. `Invoke-Py` now writes the code to a temp file and runs that.
+3. **OneDrive placeholders read as links.** Files-On-Demand stamps ordinary folders with a cloud reparse tag, so `Test-ReparsePoint` reported never-moved folders as "already relocated". It now counts only the two link kinds the script creates (junction, symbolic link).
+4. **A vault with no git repo was refused.** `return @()` unrolls to `$null` through the pipeline, and `$null` means "the probe failed". It now returns `,@()`.
+5. **The live-session check could terminate an unrelated process.** On Windows `os.kill(pid, 0)` is not a probe: it calls `TerminateProcess`, and the pid in the session lock is the short-lived hook's pid, so it hit whatever process Windows had since given that number. Both the `.ps1` and the `.sh` now ask Windows for a query handle (`OpenProcess` + `GetExitCodeProcess`) and keep `os.kill(pid, 0)` for POSIX. `scripts/gh-safe.py` already avoids this for the same reason.
+
+**Tested:** `scripts/test-relocate-machinery-sidecar.ps1` run under Windows PowerShell 5.1 (pointed at `powershell.exe` instead of `pwsh`): 22 of 22 pass with this change; the version on `main` crashes before the first assertion. Not covered: CI does not run the suite under 5.1, so nothing stops these from coming back.
+
 ---
 
 ## 2026-10-05: the maintenance installer leaves your launchd job alone under a different HOME
