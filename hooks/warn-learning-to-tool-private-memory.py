@@ -4,7 +4,7 @@
 SOFT-warns (never blocks) when a LEARNING-shaped file is written to a TOOL-PRIVATE
 memory store — Claude Code's per-project memory at
 ``~/.claude/projects/<key>/memory/`` whose ``memory`` dir is a REAL directory (not
-a symlink into a shared / vault-backed brain).
+a symlink, or on Windows a directory junction, into a shared / vault-backed brain).
 
 Why
 ---
@@ -26,7 +26,8 @@ The three homes (see docs/MEMORY_SYSTEM.md "The three homes")
 
 What is ALLOWED (no nudge)
 --------------------------
-- A ``memory`` dir that is a SYMLINK (already wired into a shared / vault brain).
+- A ``memory`` dir that is a SYMLINK, or on Windows a directory JUNCTION (already
+  wired into a shared / vault brain).
 - Non-learning content (a scratch note, project state, a user-identity fact).
 - Any path that is not a ``~/.claude/projects/*/memory`` store.
 
@@ -42,6 +43,8 @@ Bypass: ``TOOL_PRIVATE_MEMORY_BYPASS=1`` (document why).
 """
 from __future__ import annotations
 
+# utf8-stdout-ok: the only console write is print(json.dumps(...)) with the default
+# ensure_ascii=True, so stdout only ever carries ASCII (no raw non-ASCII write).
 import json
 import os
 import sys
@@ -65,6 +68,28 @@ LEARNING_TEXT_SIGNALS = (
     "Codified",
 )
 LEARNING_NAME_SIGNALS = ("feedback_", "discovery_", "operating rule", "lesson", "_lesson")
+
+
+def _is_link(p: Path) -> bool:
+    """True for a symlink OR a Windows directory junction.
+
+    On Windows, scripts/link-agent-memory.py links the memory dir with a
+    junction (a symlink needs elevation or Developer Mode there), and
+    Path.is_symlink() is False for a junction. Checking only is_symlink() read
+    every correctly-linked Windows install as tool-private and nudged on each
+    learning written to it. Same test as the linker's own _is_link, so the two
+    agree on what counts as linked.
+    """
+    try:
+        if p.is_symlink():
+            return True
+        if os.name != "nt":
+            return False
+        import stat as _stat
+        attrs = getattr(os.lstat(p), "st_file_attributes", 0)
+        return bool(attrs & _stat.FILE_ATTRIBUTE_REPARSE_POINT)
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def _tool_private_memory_root(path: Path) -> Path | None:
@@ -106,7 +131,7 @@ def _nudge(file_path: str, memory_root: Path) -> str:
     return (
         f"[memory-routing] `{os.path.basename(file_path)}` reads like a reusable "
         f"learning being written to TOOL-PRIVATE memory (`{memory_root}` is a real "
-        f"dir, not a symlink to a shared brain). Another AI account, another tool "
+        f"dir, not a link to a shared brain). Another AI account, another tool "
         f"(e.g. Codex), a teammate, CI, and any retrieval runtime CANNOT read it "
         f"there — so it cannot change the team's behavior. Pick the durable home "
         f"(docs/MEMORY_SYSTEM.md “The three homes”):\n"
@@ -140,8 +165,8 @@ def main() -> int:
     memory_root = _tool_private_memory_root(target)
     if memory_root is None:
         return 0  # not a Claude-Code project memory store
-    if memory_root.is_symlink():
-        return 0  # symlink → already a shared / vault-backed brain → allowed
+    if _is_link(memory_root):
+        return 0  # symlink / junction → already a shared / vault-backed brain → allowed
 
     content = _extract_content(tool, tool_input)
     if not _looks_like_learning(file_path, content):

@@ -9,6 +9,18 @@ description: What's new in AI Brain Starter — plain English, no jargon
 
 ---
 
+## 2026-10-26: the memory-routing nudge stops firing on Windows installs whose memory is already in the vault
+
+**Who this affects:** anyone on Windows whose Claude Code project memory is linked into the vault, which the installer does through `scripts/link-agent-memory.py`.
+
+On Windows the installer links that memory folder into the vault with a directory junction, because a symlink there needs administrator rights or Developer Mode. The memory-routing guard (`hooks/warn-learning-to-tool-private-memory.py`) only treated a symlink as "already linked", and Python does not count a junction as a symlink. So on a correctly linked Windows install the guard read the vault-backed memory as private to one tool and, every time Claude saved a learning there, told it the note could not reach the shared brain. The note was already in the vault.
+
+The guard now uses the same test as the linker: a symlink, or on Windows a reparse point such as a junction. Nothing changes on macOS or Linux.
+
+**Tested:** `scripts/test-memory-routing-guard.sh` gains a Windows-only case that links the memory folder with a junction. On Windows 11 it fails against `main` (the guard nudges) and passes with this change, 6 passed and 0 failed. The existing symlink case now prints SKIP instead of failing when Git Bash's `ln -s` copies the folder, which it does on Windows without Developer Mode. Not covered: CI does not run this script, and the junction case runs only on Windows.
+
+---
+
 ## 2026-10-26: people you write about without a link now count as journal mentions
 
 **Who this affects:** anyone whose journals name people in plain text ("lunch with Maya") instead of linking them (`[[Maya Torres]]`), and anyone who uses the insight engine's people findings: who is going cold, who shows up on good or bad days.

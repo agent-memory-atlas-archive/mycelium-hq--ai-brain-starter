@@ -5,8 +5,8 @@
 # Proves BOTH halves the guard's value depends on:
 #   1. BEHAVIOR (negative control): a team-shaped learning written to a REAL
 #      tool-private memory dir NUDGES; a genuinely-local memory, a SYMLINKED
-#      (shared-backed) memory dir, an off-store path, and a bypassed write all
-#      stay SILENT. A guard that only ever fires (or never fires) is unproven —
+#      (shared-backed) memory dir, a Windows JUNCTION-linked memory dir, an
+#      off-store path, and a bypassed write all stay SILENT. A guard that only ever fires (or never fires) is unproven —
 #      the SILENT cases are the assertion set that makes the nudge meaningful.
 #   2. ACTIVATION (fresh-install smoke): the installer REGISTERS the guard in a
 #      clean settings.json. Activation is the deliverable, not file presence
@@ -56,9 +56,34 @@ out="$(run "$(payload "$REAL_MEM/user_role.md" "$LOCAL_BODY")")"
   || bad "expected silence on a local memory, got: ${out:0:100}"
 
 # 3. NEGATIVE control — symlinked (shared-backed) memory dir → SILENT
-out="$(run "$(payload "$SYM_PROJ/memory/feedback_fix_shared_source.md" "$LEARN_BODY")")"
-[ -z "$out" ] && ok "silent when the memory dir is a symlink (shared-backed)" \
-  || bad "expected silence on a symlinked dir, got: ${out:0:100}"
+# Git Bash on Windows without Developer Mode makes `ln -s` COPY the directory,
+# so there may be no symlink to test here; case 3b covers Windows instead.
+if [ -L "$SYM_PROJ/memory" ]; then
+  out="$(run "$(payload "$SYM_PROJ/memory/feedback_fix_shared_source.md" "$LEARN_BODY")")"
+  [ -z "$out" ] && ok "silent when the memory dir is a symlink (shared-backed)" \
+    || bad "expected silence on a symlinked dir, got: ${out:0:100}"
+else
+  echo "  SKIP - ln -s made a copy, not a symlink (Windows without Developer Mode)"
+fi
+
+# 3b. NEGATIVE control — Windows JUNCTION-linked memory dir → SILENT
+# This is how scripts/link-agent-memory.py links memory on Windows, and
+# Path.is_symlink() is False for a junction. Windows only.
+if [ "$(python3 -c 'import os; print(os.name)')" = "nt" ]; then
+  JCT_PROJ="$TMP/.claude/projects/jctkey"; mkdir -p "$JCT_PROJ" "$TMP/jct-brain"
+  winpath() { if command -v cygpath >/dev/null 2>&1; then cygpath -w "$1"; else printf '%s' "$1"; fi; }
+  python3 -c "import _winapi, sys; _winapi.CreateJunction(sys.argv[1], sys.argv[2])" \
+    "$(winpath "$TMP/jct-brain")" "$(winpath "$JCT_PROJ/memory")"
+  # Build the Windows path by hand: Git Bash's path conversion (and cygpath)
+  # follow the junction and would hand the guard the TARGET path, which is not
+  # a memory store, so this case would pass with or without junction support.
+  JCT_FILE="$(winpath "$JCT_PROJ")\\memory\\feedback_fix_shared_source.md"
+  out="$(run "$(payload "$JCT_FILE" "$LEARN_BODY")")"
+  [ -z "$out" ] && ok "silent when the memory dir is a Windows junction (shared-backed)" \
+    || bad "expected silence on a junction-linked dir, got: ${out:0:100}"
+else
+  echo "  SKIP - junction case is Windows-only"
+fi
 
 # 4. NEGATIVE control — path outside any tool-private memory store → SILENT
 out="$(run "$(payload "$TMP/notes/feedback_x.md" "$LEARN_BODY")")"
